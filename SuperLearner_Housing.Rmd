@@ -1,0 +1,288 @@
+---
+title: "Housing Price Prediction Using SuperLearner"
+author: "Malathy Muthu"
+date: "11/18/2019"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Free memory Functions
+
+```{r}
+# Clear environment
+rm(list = ls()) 
+
+# Clear packages
+#pacman::p_unload(rgl)
+
+# Clear plots
+# dev.off()  # But only if there IS a plot
+
+# Clear console
+cat("\014")  # ctrl+L
+```
+
+#######################################################################################################
+# Data exploration
+#######################################################################################################
+### Basic data exploration
+
+#### Reading in and basic formatting of data
+
+Start by reading in and formatting the data.
+
+```{r}
+housing <- read.csv(file.choose())
+
+```
+
+
+# Libraries
+
+We will use tidyverse libraries including ggplot2, tidyr, dplyr, and stringr to process this data.
+
+We will also use gridExtra to be able to place ggplot2 plots side-by-side.
+
+Also use caret and pROC when evaluating models.
+
+
+```{r}
+# packneeded <- c('ggplot2','stringr','tidyr','dplyr', 'gridExtra', 'caret', 'pROC', "psych" , "moments")
+# install.packages(packneeded, dependencies = TRUE)
+```
+
+
+```{r load-libs, echo=TRUE, eval=TRUE,message=FALSE,warning=FALSE}
+library(ggplot2)
+library(stringr)
+library(tidyr)
+library(dplyr)
+library(gridExtra)
+library(caret)
+library(pROC)
+library(psych)
+library(moments)
+```
+
+```{r}
+names(housing) # variable names
+```
+
+#######################################################################################################
+## Descriptive statistics include:
+#######################################################################################################
+
+Mean - arithmetic average
+Median - middle value
+Mode - most frequent value
+Standard Deviation - variation around the mean
+Interquartile Range - range encompasses 50% of the values
+Kurtosis - peakedness of the data distribution
+Skewness - symmetry of the data distribution
+
+```{r}
+str(housing) # structure
+```
+
+The summary() function is known as a generic R function. It will return a preprogrammed summary for any R object. Because autinsurance is a data frame, we get a summary of each column. Factors will be summarized by their frequency (i.e., number of observations), while numeric or integer variables will print out a five number summary, and characters simply print their length. The number of missing observations for any variable will also be printed if they are present. 
+
+```{r}
+summary(housing)
+```
+
+
+```{r}
+glimpse(housing) # You need to install dplyr (used to manipulate data in R)
+```
+
+
+```{r}
+describe(housing) # Psych
+```
+
+
+#######################################################################################################
+### Encoding the target feature as factor
+######################################################################################################## 
+
+```{r}
+
+housing = select(housing, - "X")
+
+
+```
+
+#######################################################################################################
+### Splitting the Bchurn into the Training set and Test set
+#######################################################################################################
+
+```{r}
+#install.packages('caTools')
+
+library(caTools)
+
+set.seed(123) #
+```
+
+#######################################################################################################
+###  From caTools packages we will be using sample.split function
+#######################################################################################################
+
+```{r}
+
+split = sample.split(housing$saleprice, SplitRatio = 0.80)
+training_set = subset(housing, split == TRUE)
+test_set = subset(housing, split == FALSE)
+```
+
+
+#######################################################################################################
+### Ensemble Learning in R with SuperLearner
+#######################################################################################################
+
+```{r}
+# Install the package
+#install.packages("SuperLearner")
+
+# Load the package
+library("SuperLearner")
+```
+
+###Your First Ensemble Model with SuperLearner
+To start creating your first model, you can use the following command to preview what models are available in the package:
+
+```{r}
+listWrappers()
+```
+
+```{r}
+# y <- as.numeric(training_set$fraud_reported)-1
+# x <- data.frame(training_set[-38])
+```
+
+```{r}
+###Your First Ensemble Model with SuperLearner for Random Forest
+set.seed(150)
+y = training_set$saleprice
+x = training_set[-1]
+single.model = SuperLearner(y ,  # Use randomForest to build our classifier
+                            x , 
+                            family=gaussian(), #For classifications use binomial
+                            SL.library=list("SL.glmnet")) #ranger is for Random Forest
+single.model
+```
+
+
+
+#Next, simply printing the model provides the coefficient, which is the weight of the algorithm in the model and the risk factor which is #the error the algorithm produces. Behind the scenes, the package fits each algorithm used in the ensemble to produce the risk factor.
+#In this case, your risk factor is less than 0.11. Of course, this will need to be tested through external cross validation and in the test #set, but it is a good start. The beauty of SuperLearner is that it tries to automatically build an ensemble through the use of cross #validation. Of course, if there is only one model, then it gets the full weight of the ensemble.
+
+#######################################################################################################
+### Adding other models for regression
+#######################################################################################################
+
+```{r}
+#Ensembling with SuperLearner is as simple as selecting the algorithms to use. In this case, let's add Kernel Support Vector Machines (KSVM) from the kernlab package, Bayes Generalized Linear Models (GLM) from the arm package and bagging from the ipred package.
+set.seed(150)
+
+model = SuperLearner(y ,  # Use randomForest to build our classifier
+                            x , 
+                            family=gaussian(),
+                            SL.library=list("SL.glmnet","SL.ridge","SL.glm", "SL.xgboost","SL.ranger"
+                                            #,"SL.biglasso","SL.mean"
+                                            )) 
+
+model
+
+model$times
+
+names(model)
+
+head(model$SL.predict)
+
+
+
+#Adding these algorithms improved your model and changed the landscape. Ranger and Bayesglm have a coefficient close to zero, which means that it is not weighted as part of the ensemble anymore. KSVM and Bagging make up the rest of the weight of the model. You will notice SuperLearner is calculating this risk for you and deciding on the optimal model mix that will reduce the error.
+```
+```{r}
+
+
+SLPred = predict.SuperLearner(model,newdata=test_set[-1],onlySL = TRUE) 
+
+#head(SLPred)
+
+#SLPred_vector = as.vector(SLPred)
+#test_set_vector = as.vector(test_set[1])
+
+
+data.frame(
+RMSE_MSL =RMSE(SLPred$pred, test_set$saleprice),
+Rsquare_MSL =R2(SLPred$pred, test_set$saleprice)
+)
+```
+```{r}
+# preds <- SLPred_vector
+# actual <-test_set_vector
+# rss <- sum((preds - actual) ^ 2)
+# tss <- sum((actual - mean(actual)) ^ 2)
+# rsq <- 1 - rss/tss
+
+
+
+
+```
+
+
+
+
+### Tuning Hyperparameters in superlearner
+```{r}
+#While model performance is not terrible, you can try to improve your performance by tuning some hyperparameters of some of the models that you have in the ensemble. Ranger was not weighted heavily in your model, but maybe that is because you need more trees and need to tune mtry parameter. Maybe you can improve bagging as well by increasing the nbagg parameter to 250 from the default of 25.
+
+SL.glmnet.tune <- function(...){
+      SL.glmnet(..., alpha=0, nlambda =200)
+    }
+
+```
+
+
+```{r}
+ # Set the seed
+    set.seed(150)
+
+    # Create the tuned model
+    model.tune <- SuperLearner(y,
+                              x,
+                              SL.library=list("SL.glmnet","SL.ridge",
+                                              "SL.glmnet.tune"))
+
+    # Return the tuned model
+    model.tune
+```
+```{r}
+
+
+
+SLPred.tune = predict(model.tune, newdata = test_set[-1])
+
+#head(SLPred)
+
+#SLPred_vector = as.vector(SLPred)
+#test_set_vector = as.vector(test_set[1])
+
+
+data.frame(
+RMSE_MSL.tune =RMSE(SLPred.tune$pred, test_set$saleprice),
+Rsquare_MSL.tune =R2(SLPred.tune$pred, test_set$saleprice)
+)
+```
+
+
+
+

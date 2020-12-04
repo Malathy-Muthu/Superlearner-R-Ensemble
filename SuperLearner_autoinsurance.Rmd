@@ -1,0 +1,374 @@
+---
+title: "Auto Insurance Claim Prediction Using SuperLearner"
+author: "Malathy Muthu"
+date: "11/18/2019"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Free memory Functions
+
+```{r}
+# Clear environment
+rm(list = ls()) 
+
+# Clear packages
+#pacman::p_unload(rgl)
+
+# Clear plots
+# dev.off()  # But only if there IS a plot
+
+# Clear console
+cat("\014")  # ctrl+L
+```
+
+#######################################################################################################
+# Data exploration
+#######################################################################################################
+### Basic data exploration
+
+#### Reading in and basic formatting of data
+
+Start by reading in and formatting the data.
+
+```{r}
+autinsurance <- read.csv(file.choose())
+
+```
+
+
+# Libraries
+
+We will use tidyverse libraries including ggplot2, tidyr, dplyr, and stringr to process this data.
+
+We will also use gridExtra to be able to place ggplot2 plots side-by-side.
+
+Also use caret and pROC when evaluating models.
+
+
+```{r}
+# packneeded <- c('ggplot2','stringr','tidyr','dplyr', 'gridExtra', 'caret', 'pROC', "psych" , "moments")
+# install.packages(packneeded, dependencies = TRUE)
+```
+
+
+```{r load-libs, echo=TRUE, eval=TRUE,message=FALSE,warning=FALSE}
+library(ggplot2)
+library(stringr)
+library(tidyr)
+library(dplyr)
+library(gridExtra)
+library(caret)
+library(pROC)
+library(psych)
+library(moments)
+```
+
+```{r}
+names(autinsurance) # variable names
+```
+
+#######################################################################################################
+## Descriptive statistics include:
+#######################################################################################################
+
+Mean - arithmetic average
+Median - middle value
+Mode - most frequent value
+Standard Deviation - variation around the mean
+Interquartile Range - range encompasses 50% of the values
+Kurtosis - peakedness of the data distribution
+Skewness - symmetry of the data distribution
+
+```{r}
+str(autinsurance) # structure
+```
+
+The summary() function is known as a generic R function. It will return a preprogrammed summary for any R object. Because autinsurance is a data frame, we get a summary of each column. Factors will be summarized by their frequency (i.e., number of observations), while numeric or integer variables will print out a five number summary, and characters simply print their length. The number of missing observations for any variable will also be printed if they are present. 
+
+```{r}
+summary(autinsurance)
+```
+
+
+```{r}
+glimpse(autinsurance) # You need to install dplyr (used to manipulate data in R)
+```
+
+
+```{r}
+describe(autinsurance) # Psych
+```
+
+
+#######################################################################################################
+### Encoding the target feature as factor
+######################################################################################################## 
+
+```{r}
+
+autinsurance = select(autinsurance, - "X")
+
+# factor()
+#str(autinsurance$fraud_reported)
+
+#autinsurance$fraud_reported = factor(autinsurance$fraud_reported, levels = c(0, 1))
+
+#str(autinsurance$fraud_reported)
+```
+
+#######################################################################################################
+### Splitting the Bchurn into the Training set and Test set
+#######################################################################################################
+
+```{r}
+#install.packages('caTools')
+
+library(caTools)
+
+set.seed(123) #
+```
+
+#######################################################################################################
+###  From caTools packages we will be using sample.split function
+#######################################################################################################
+
+```{r}
+
+split = sample.split(autinsurance$fraud_reported, SplitRatio = 0.80)
+training_set = subset(autinsurance, split == TRUE)
+test_set = subset(autinsurance, split == FALSE)
+```
+
+
+#######################################################################################################
+### Ensemble Learning in R with SuperLearner
+#######################################################################################################
+
+```{r}
+# Install the package
+#install.packages("SuperLearner")
+
+# Load the package
+library("SuperLearner")
+```
+
+###Your First Ensemble Model with SuperLearner
+To start creating your first model, you can use the following command to preview what models are available in the package:
+
+```{r}
+listWrappers()
+```
+
+```{r}
+# y <- as.numeric(training_set$fraud_reported)-1
+# x <- data.frame(training_set[-38])
+```
+
+```{r}
+###Your First Ensemble Model with SuperLearner for Random Forest
+set.seed(150)
+y = training_set$fraud_reported
+x = training_set[-3]
+single.model = SuperLearner(y ,  # Use randomForest to build our classifier
+                            x , 
+                            family=binomial(), #For classifications use binomial
+                            SL.library=list("SL.ranger")) #ranger is for Random Forest
+single.model
+```
+
+
+
+#Next, simply printing the model provides the coefficient, which is the weight of the algorithm in the model and the risk factor which is #the error the algorithm produces. Behind the scenes, the package fits each algorithm used in the ensemble to produce the risk factor.
+#In this case, your risk factor is less than 0.11. Of course, this will need to be tested through external cross validation and in the test #set, but it is a good start. The beauty of SuperLearner is that it tries to automatically build an ensemble through the use of cross #validation. Of course, if there is only one model, then it gets the full weight of the ensemble.
+
+#######################################################################################################
+### Loading DMwr to balance the unbalanced class
+#######################################################################################################
+
+```{r}
+#Ensembling with SuperLearner is as simple as selecting the algorithms to use. In this case, let's add Kernel Support Vector Machines (KSVM) from the kernlab package, Bayes Generalized Linear Models (GLM) from the arm package and bagging from the ipred package.
+set.seed(150)
+
+model = SuperLearner(y ,  # Use randomForest to build our classifier
+                            x , 
+                            family=binomial(),
+                            SL.library=list("SL.ranger","SL.ksvm","SL.ipredbagg","SL.bayesglm")) #ranger is for Random Forest
+
+model
+
+#Adding these algorithms improved your model and changed the landscape. Ranger and Bayesglm have a coefficient close to zero, which means that it is not weighted as part of the ensemble anymore. KSVM and Bagging make up the rest of the weight of the model. You will notice SuperLearner is calculating this risk for you and deciding on the optimal model mix that will reduce the error.
+```
+
+## To understand each model's specific contribution to the model and the variation, you can use SuperLearner's internal cross-validation function CV.SuperLearner(). To set the number of folds, you can use the V argument. In this case, you will set it to 5:
+
+```{r}
+# set.seed(150)
+# 
+# cv.model = CV.SuperLearner(y ,  # Use randomForest to build our classifier
+#                             x , 
+#                             V=5,
+#                             SL.library=list("SL.ranger","SL.ksvm","SL.ipredbagg","SL.bayesglm")) #ranger is for Random Forest
+# 
+# summary(cv.model)
+# plot(cv,model)
+```
+
+
+```{r}
+predictions <- predict.SuperLearner(model,newdata=test_set[-3])
+head(predictions$pred)
+head(predictions$library.predict)
+#This allows you to see how each model classified each observation. This could be useful in debugging the model or fitting multiple models at once to see which to use further.
+```
+
+
+
+#######################################################################################################
+### Using dplyr
+#######################################################################################################
+```{r}
+#You may have noticed the prediction quantities being returned. They are in the form of probabilities. That means that you will need a cut off threshold to determine if you should classify a one or zero. This only needs to be done in the binomial classification case, not regression. Normally, you would determine this in training with cross-validation, but for simplicity, you will use a cut off of 0.50. Since this is a simple binomial problem, you will use dplyr's ifelse() function to recode your probabilities:
+
+library(dplyr)
+
+  # Recode probabilities
+    conv.preds <- ifelse(predictions$pred>=0.5,1,0)
+    head(conv.preds)
+
+```
+
+
+#######################################################################################################
+###
+#######################################################################################################
+
+```{r}
+#Now you can build a confusion matrix with caret to review the results:
+
+ytest<-as.numeric(unlist(test_set[3]))
+
+cm <- confusionMatrix(
+      factor(conv.preds,levels=0:1),
+      factor(ytest,levels=0:1)
+)
+
+cm
+```
+
+### Tuning Hyperparameters in superlearner
+```{r}
+#While model performance is not terrible, you can try to improve your performance by tuning some hyperparameters of some of the models that you have in the ensemble. Ranger was not weighted heavily in your model, but maybe that is because you need more trees and need to tune mtry parameter. Maybe you can improve bagging as well by increasing the nbagg parameter to 250 from the default of 25.
+
+SL.ranger.tune <- function(...){
+      SL.ranger(..., num.trees=400, mtry=2)
+    }
+
+    SL.ipredbagg.tune <- function(...){
+      SL.ipredbagg(..., nbagg=250)
+    }
+```
+```{r}
+#Note that you will keep the original SL.ranger and SL.ipredbagg functions in the algorithm to see if performance improves on your tuned versions of the functions.CV = Cross Validation
+# Set the seed
+# install.packages('BH_1.66.0-1.tar.gz', repos = NULL)
+# view_mode <- "local"
+# saveRDS(view_mode, file = paste0(getwd(), "/view_mode.rds"))
+# 
+#     set.seed(150)
+# 
+#     # Tune the model
+#     cv.model.tune <- CV.SuperLearner(y,
+#                                      x,
+#                                      V=5,
+#                                      SL.library=list("SL.ranger",
+#                                                      "SL.ksvm",
+#                                                      "SL.ipredbagg","SL.bayesglm", 
+#                                                      "SL.ranger.tune",
+#                                                      "SL.ipredbagg.tune",
+#                                                   ))
+# 
+#     # Get summary statistics
+#     summary(cv.model.tune)
+#     plot(cv.model.tune)
+```
+
+```{r}
+ # Set the seed
+    set.seed(150)
+
+    # Create the tuned model
+    model.tune <- SuperLearner(y,
+                              x,
+                              SL.library=list("SL.ranger",
+                                              "SL.ksvm",
+                                              "SL.ipredbagg",
+                                              "SL.bayesglm",
+                                              "SL.ranger.tune",
+                                              "SL.ipredbagg.tune"))
+
+    # Return the tuned model
+    model.tune
+    plot(model.tune)
+```
+
+```{r}
+pred_tune <- predict.SuperLearner(model.tune,newdata=test_set[-3])
+head(pred_tune$pred)
+head(pred_tune$library.predict)
+conv.preds_tune <- ifelse(pred_tune$pred>=0.5,1,0)
+head(conv.preds_tune)
+
+
+cm_tune <- confusionMatrix(
+      factor(conv.preds_tune,levels=0:1),
+      factor(ytest,levels=0:1)
+)
+
+cm_tune
+
+```
+```{r}
+set.seed(150)
+
+all_model = SuperLearner(y ,  # Use randomForest to build our classifier
+                            x , 
+                            family=binomial(),
+                            SL.library=list("SL.rpart" ,
+                                            "SL.logreg",
+                                            "SL.bayesglm",
+                                            "SL.randomForest",
+                                            "SL.svm",
+                                            "SL.ksvm",
+                                            "SL.gbm",
+                                            "SL.ranger",
+                                            "SL.rpartPrune",
+                                            "SL.xgboost",
+                                            "SL.ipredbagg",
+                                            "SL.extraTrees")) 
+
+all_model
+```
+```{r}
+pred_all_model <- predict.SuperLearner(all_model,newdata=test_set[-3],onlySL=TRUE)
+head(pred_all_model$pred)
+head(pred_all_model$library.predict)
+conv.pred_all_model <- ifelse(pred_all_model$pred>=0.5,1,0)
+head(conv.pred_all_model)
+
+
+cm_all_model <- confusionMatrix(
+      factor(conv.pred_all_model,levels=0:1),
+      factor(ytest,levels=0:1)
+)
+
+cm_all_model
+```
+
+
